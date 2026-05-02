@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <title>Casa Mia</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow" id="todayLabel"></p>
+          <h1>Casa Mia</h1>
+        </div>
+        <button class="icon-button" id="themeToggle" type="button" aria-label="Cambia tema" title="Cambia tema">
+          <span aria-hidden="true">&#9790;</span>
+        </button>
+      </header>
+
+      <section class="overview" aria-label="Riepilogo">
+        <div>
+          <span id="totalCount">0</span>
+          <small>totali</small>
+        </div>
+        <div>
+          <span id="openCount">0</span>
+          <small>aperti</small>
+        </div>
+        <div>
+          <span id="doneCount">0</span>
+          <small>chiusi</small>
+        </div>
+      </section>
+
+      <nav class="section-tabs" aria-label="Sezioni">
+        <button class="tab is-active" type="button" data-section="todo">Da fare</button>
+        <button class="tab" type="button" data-section="shopping">Spesa</button>
+        <button class="tab" type="button" data-section="notes">Note</button>
+      </nav>
+
+      <section class="composer" aria-label="Nuovo elemento">
+        <form id="itemForm" autocomplete="off">
+          <input id="itemTitle" name="title" type="text" maxlength="90" placeholder="Aggiungi qualcosa..." required>
+          <textarea id="itemBody" name="body" rows="3" maxlength="500" placeholder="Dettagli"></textarea>
+          <div class="form-actions">
+            <button class="ghost-button" id="cancelEdit" type="button" hidden>Annulla</button>
+            <button class="primary-button" id="saveButton" type="submit">Aggiungi</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="list-panel" aria-live="polite">
+        <div class="panel-heading">
+          <h2 id="sectionTitle">Da fare</h2>
+          <button class="ghost-button compact" id="clearDone" type="button">Pulisci chiusi</button>
+        </div>
+        <ul class="item-list" id="itemList"></ul>
+        <p class="empty-state" id="emptyState" hidden>Niente qui.</p>
+      </section>
+    </main>
+
+    <template id="itemTemplate">
+      <li class="item-card">
+        <button class="check-button" type="button" aria-label="Segna come completato" title="Completa">
+          <span aria-hidden="true"></span>
+        </button>
+        <div class="item-content">
+          <h3></h3>
+          <p></p>
+        </div>
+        <div class="item-actions">
+          <button class="icon-button small edit-item" type="button" aria-label="Modifica" title="Modifica">
+            <span aria-hidden="true">&#9998;</span>
+          </button>
+          <button class="icon-button small delete-item" type="button" aria-label="Elimina" title="Elimina">
+            <span aria-hidden="true">&times;</span>
+          </button>
+        </div>
+      </li>
+    </template>
+
+    <script src="app.js"></script>
+  </body>
+</html>
