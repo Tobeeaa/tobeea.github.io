@@ -1,4 +1,5 @@
 const STORAGE_KEY = "casa-mia-v1";
+const API_BASE = "/api/items";
 
 const sections = {
   todo: {
@@ -18,17 +19,17 @@ const sections = {
   },
 };
 
-const defaultState = {
-  activeSection: "todo",
-  theme: "auto",
+const state = {
+  activeSection: localStorage.getItem("casa-mia-section") || "todo",
+  theme: localStorage.getItem("casa-mia-theme") || "light",
   editingId: null,
   items: [],
+  apiReady: false,
 };
-
-let state = loadState();
 
 const root = document.documentElement;
 const todayLabel = document.querySelector("#todayLabel");
+const syncLabel = document.querySelector("#syncLabel");
 const totalCount = document.querySelector("#totalCount");
 const openCount = document.querySelector("#openCount");
 const doneCount = document.querySelector("#doneCount");
@@ -53,8 +54,9 @@ todayLabel.textContent = new Intl.DateTimeFormat("it-IT", {
 
 applyTheme();
 render();
+loadItems();
 
-form.addEventListener("submit", (event) => {
+form.addEventListener("submit", async (event) => {
   event.preventDefault();
 
   const title = titleInput.value.trim();
@@ -65,30 +67,35 @@ form.addEventListener("submit", (event) => {
     return;
   }
 
-  if (state.editingId) {
-    state.items = state.items.map((item) => {
-      if (item.id !== state.editingId) return item;
-      return {
-        ...item,
-        title,
-        body,
-        updatedAt: new Date().toISOString(),
-      };
-    });
-  } else {
-    state.items.unshift({
-      id: createId(),
-      section: state.activeSection,
-      title,
-      body,
-      done: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-  }
+  setBusy(true);
 
-  resetForm();
-  saveAndRender();
+  try {
+    if (state.editingId) {
+      const updated = await apiRequest(`${API_BASE}/${encodeURIComponent(state.editingId)}`, {
+        method: "PATCH",
+        body: { title, body },
+      });
+      state.items = state.items.map((item) => (item.id === updated.id ? updated : item));
+    } else {
+      const created = await apiRequest(API_BASE, {
+        method: "POST",
+        body: {
+          section: state.activeSection,
+          title,
+          body,
+        },
+      });
+      state.items.unshift(created);
+    }
+
+    resetForm();
+    setStatus("Salvato");
+    render();
+  } catch (error) {
+    setStatus("Errore database");
+  } finally {
+    setBusy(false);
+  }
 });
 
 cancelEdit.addEventListener("click", () => {
@@ -99,27 +106,33 @@ cancelEdit.addEventListener("click", () => {
 tabs.forEach((tab) => {
   tab.addEventListener("click", () => {
     state.activeSection = tab.dataset.section;
+    localStorage.setItem("casa-mia-section", state.activeSection);
     resetForm();
-    saveAndRender();
+    render();
   });
 });
 
-itemList.addEventListener("click", (event) => {
+itemList.addEventListener("click", async (event) => {
   const card = event.target.closest(".item-card");
   if (!card) return;
 
   const id = card.dataset.id;
 
   if (event.target.closest(".check-button")) {
-    state.items = state.items.map((item) => {
-      if (item.id !== id) return item;
-      return {
-        ...item,
-        done: !item.done,
-        updatedAt: new Date().toISOString(),
-      };
-    });
-    saveAndRender();
+    const item = state.items.find((entry) => entry.id === id);
+    if (!item) return;
+
+    try {
+      const updated = await apiRequest(`${API_BASE}/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: { done: !item.done },
+      });
+      state.items = state.items.map((entry) => (entry.id === updated.id ? updated : entry));
+      setStatus("Salvato");
+      render();
+    } catch (error) {
+      setStatus("Errore database");
+    }
   }
 
   if (event.target.closest(".edit-item")) {
@@ -127,29 +140,110 @@ itemList.addEventListener("click", (event) => {
   }
 
   if (event.target.closest(".delete-item")) {
-    state.items = state.items.filter((item) => item.id !== id);
-    if (state.editingId === id) resetForm();
-    saveAndRender();
+    try {
+      await apiRequest(`${API_BASE}/${encodeURIComponent(id)}`, { method: "DELETE" });
+      state.items = state.items.filter((item) => item.id !== id);
+      if (state.editingId === id) resetForm();
+      setStatus("Salvato");
+      render();
+    } catch (error) {
+      setStatus("Errore database");
+    }
   }
 });
 
 themeToggle.addEventListener("click", () => {
-  state.theme = currentTheme() === "dark" ? "light" : "dark";
+  state.theme = state.theme === "dark" ? "light" : "dark";
+  localStorage.setItem("casa-mia-theme", state.theme);
   applyTheme();
-  saveState();
 });
 
-clearDone.addEventListener("click", () => {
-  const before = state.items.length;
-  state.items = state.items.filter((item) => {
-    return item.section !== state.activeSection || !item.done;
-  });
-
-  if (state.items.length !== before) {
+clearDone.addEventListener("click", async () => {
+  try {
+    await apiRequest(`${API_BASE}?section=${encodeURIComponent(state.activeSection)}`, {
+      method: "DELETE",
+    });
+    state.items = state.items.filter((item) => {
+      return item.section !== state.activeSection || !item.done;
+    });
     resetForm();
-    saveAndRender();
+    setStatus("Salvato");
+    render();
+  } catch (error) {
+    setStatus("Errore database");
   }
 });
+
+async function loadItems() {
+  setStatus("Carico");
+
+  try {
+    state.items = await apiRequest(API_BASE);
+    await migrateLocalStorageItems();
+    state.apiReady = true;
+    setStatus("Database");
+  } catch (error) {
+    state.apiReady = false;
+    setStatus("Server spento");
+  }
+
+  render();
+}
+
+async function migrateLocalStorageItems() {
+  if (state.items.length > 0 || localStorage.getItem("casa-mia-migrated") === "true") {
+    return;
+  }
+
+  const previous = readPreviousLocalState();
+  if (!previous.items.length) return;
+
+  const migratedItems = [];
+  for (const item of previous.items) {
+    const created = await apiRequest(API_BASE, {
+      method: "POST",
+      body: {
+        section: item.section,
+        title: item.title,
+        body: item.body || "",
+        done: Boolean(item.done),
+      },
+    });
+    migratedItems.push(created);
+  }
+
+  state.items = migratedItems;
+  localStorage.setItem("casa-mia-migrated", "true");
+}
+
+function readPreviousLocalState() {
+  try {
+    const previous = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    return {
+      items: Array.isArray(previous?.items) ? previous.items : [],
+    };
+  } catch {
+    return { items: [] };
+  }
+}
+
+async function apiRequest(path, options = {}) {
+  const response = await fetch(path, {
+    method: options.method || "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: options.body ? JSON.stringify(options.body) : undefined,
+  });
+
+  const payload = await response.json();
+
+  if (!response.ok) {
+    throw new Error(payload.error || "Errore API");
+  }
+
+  return payload;
+}
 
 function render() {
   const section = sections[state.activeSection];
@@ -186,6 +280,7 @@ function render() {
     itemList.append(node);
   });
 
+  emptyState.textContent = state.apiReady ? "Niente qui." : "Avvia il server Python.";
   emptyState.hidden = items.length > 0;
   clearDone.disabled = !items.some((item) => item.done);
 }
@@ -212,50 +307,16 @@ function resetForm() {
   cancelEdit.hidden = true;
 }
 
-function saveAndRender() {
-  saveState();
-  render();
+function setBusy(isBusy) {
+  saveButton.disabled = isBusy;
+  clearDone.disabled = isBusy || !state.items.some((item) => item.section === state.activeSection && item.done);
 }
 
-function loadState() {
-  try {
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    return {
-      ...defaultState,
-      ...stored,
-      items: Array.isArray(stored?.items) ? stored.items : [],
-    };
-  } catch {
-    return { ...defaultState };
-  }
-}
-
-function saveState() {
-  const savedState = {
-    activeSection: state.activeSection,
-    theme: state.theme,
-    items: state.items,
-  };
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(savedState));
-}
-
-function createId() {
-  if (crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+function setStatus(label) {
+  syncLabel.textContent = label;
 }
 
 function applyTheme() {
-  const theme = currentTheme();
-  root.dataset.theme = theme;
-  themeToggle.querySelector("span").textContent = theme === "dark" ? "\u2600" : "\u263e";
-}
-
-function currentTheme() {
-  if (state.theme === "auto") {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  }
-  return state.theme;
+  root.dataset.theme = state.theme;
+  themeToggle.querySelector("span").textContent = state.theme === "dark" ? "\u2600" : "\u263e";
 }
